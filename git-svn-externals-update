@@ -1,15 +1,23 @@
-#!/bin/bash
+#!/bin/sh
+# vi: set ft=sh expandtab shiftwidth=4 tabstop=4:
+set -e
+set -u
 
-toplevel_directory="$(git rev-parse --show-cdup)"
-[ -n "$toplevel_directory" ] && { echo "please run from the toplevel directory"; exit 1; }
+call() { echo " $@" ; "$@" ; }
 
-find .git_externals -type d -name .git | while read gitdir; do
-	dir=$(dirname "$gitdir")
-    if [ -d $dir ]; then
-	pushd $dir
-	echo $dir
-	git svn fetch
-	git svn rebase
-	popd
+tld="$(git rev-parse --show-cdup)"
+if test -n "$tld" ; then
+    cd -- "$tld"
+fi
+
+find .git_externals -type d -name .git | while read gitdir ; do
+    dir="$(dirname -- "$gitdir")"
+    if test -d "$dir" ; then
+    (
+        cd -- "$dir"
+        echo $dir
+        call git svn fetch
+        call git svn rebase
+    )
     fi
 done

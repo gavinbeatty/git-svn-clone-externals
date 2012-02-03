@@ -4,7 +4,6 @@ set -e # the code relies on this, so remove with care
 set -u
 
 verbose=1
-dry_run=${dry_run-}
 help=${help-}
 
 error() { echo "error: $@" >&2 ; }
@@ -12,17 +11,13 @@ warn() { echo "warn: $@" >&2 ; }
 die() { error "$@" ; exit 1 ; }
 verbose() { test "$1" -gt "$verbose" || { shift ; echo "$@" ; } ; }
 
-call() {
-    echo "$@"
-    if test -z "$dry_run" ; then
-        "$@"
-    fi
-}
+call() { echo "(cd -- $(pwd) ; $@)" ; "$@" ; }
 
 do_clone() {
     local rev="$1"
     local url="$2"
     local co="$3"
+    test -z "$rev" || rev="-r $rev"
     test -d .git_externals || return 1
     local module="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
     local branch="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
@@ -45,9 +40,9 @@ do_clone() {
             if test "$module" = "$url" ; then
                 # URL does not contains any trunk, branches or tags part, so we dont need
                 # additional options for git-svn
-                (cd .git_externals ; call git svn clone "$rev" "$module" "$co")
+                (cd .git_externals ; call git svn clone $rev "$module" "$co")
             else
-                (cd .git_externals ; call git svn clone "$rev" "$module" -T trunk -b "$brch" -t "$tags" "$co")
+                (cd .git_externals ; call git svn clone $rev "$module" -T trunk -b "$brch" -t "$tags" "$co")
             fi
 
         fi
@@ -55,10 +50,8 @@ do_clone() {
             branch="$(echo $branch | sed -e 's,/$,,')"
             if test -n "$branch" ; then
                 cd -- ".git_externals/$co"
-                dry_run=1
-                warn "The following commands might trash your checkout, so I won't run them myself."
-                warn "I will only print the commands, and you should verify them and run them yourself."
-                echo git reset --hard "$branch"
+                warn "The following command might trash your checkout if there are bugs, so I won't run them for you."
+                echo "(cd -- $(pwd) ; git reset --hard "$branch")"
             fi
         )
     )
@@ -89,12 +82,11 @@ do_excludes() {
 
 is_excluded() {
     if test -f .git_externals_exclude ; then
-        local matches="$(grep -v "^#" .git_externals_exclude | grep "^/$1$" | wc -l)"
-        if test "$matches" -gt 0 ; then
-            return 1
+        if test -n "$(grep -v "^#" .git_externals_exclude | grep "^/$1$")" ; then
+            return 0
         fi
     fi
-    return 0
+    return 1
 }
 
 is_rev() { echo "$1" | grep -Eq '^r?[0-9]+' ; }
@@ -105,7 +97,8 @@ is_url() {
     return 1
 }
 categorise() {
-    if is_rev "$1" ; then echo "rev"
+    if test -z "$1" ; then return 0
+    elif is_rev "$1" ; then echo "rev"
     elif is_url "$1" ; then echo "url"
     else echo "dir" ; fi
 }
@@ -129,7 +122,7 @@ main() {
     git svn show-externals \
       | grep -vE '#|^$' \
       | sed -e 's/\(-r\)[ ]*\([0-9]\{1,\}\)/\1\2/' \
-      | while read rev_co rev_url url_co d ; do
+      | while read rev_co rev_url url_co extra ; do
         test -n "$rev_co" || continue
 
         local rev=""
@@ -151,20 +144,24 @@ main() {
         case "$(categorise "$url_co")" in
         url) url="$url_co" ;;
         dir) co="$url_co" ;;
-        *) die "$url_co was expected to be a remote URL or directory"
+        *) ;;
         esac
 
         if test -n "$extra" ; then
             warn "Unknown extra data from 'git svn show-externals': $extra"
         fi
-        unset url_co rev_url rev_co extra
 
+        local line="$rev_co $rev_url $url_co $extra"
         # XXX these error messages could be improved
         if test -z "$url" ; then
-            die "URL field is empty"
+            die "URL field is empty: $line"
         fi
         if test -z "$co" ; then
-            die "Directory field is empty"
+            die "Directory field is empty: $line"
+        fi
+        unset url_co rev_url rev_co extra
+        if echo "$co" | grep -q '^/' ; then
+            co=".$co"
         fi
 
         if ! is_excluded "$co" ; then

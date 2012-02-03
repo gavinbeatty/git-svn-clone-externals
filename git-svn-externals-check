@@ -1,19 +1,23 @@
-#!/bin/bash
+#!/bin/sh
+# vi: set ft=sh expandtab shiftwidth=4 tabstop=4:
+set -e
+set -u
 
-for dir in *; do
-    if [ -d $dir ]; then
-       cd $dir
-       STATUS=$(git status)
-       UNPUSHED=$(git-svn-check-unpushed)
-       if [ $(echo $STATUS|grep -c "clean") -lt 1 -o \
-	    $(echo $UNPUSHED|grep -c "No unpushed") -lt 1 ]; then
-	   echo '>>>>>>>>>>>>>>>>' $dir '<<<<<<<<<<<<<<<<'
-	   git status
-	   git-svn-check-unpushed
-	   echo '----------------------------------------'
+for dir in * ; do
+    if test -d "$dir" ; then
+    (
+       cd -- "$dir"
+       STATUS="$(git status)"
+       UNPUSHED="$(git-svn-check-unpushed)"
+       if test "$(git status | grep -Fi "clean" | wc -l)" -lt 1 -o \
+        "$(git-svn-check-unpushed | grep -Fi "No unpushed" | wc -l)" -lt 1 ; then
+           echo ">>>>>>>>>>>>>>>> $dir <<<<<<<<<<<<<<<<"
+           git status
+           git-svn-check-unpushed
+           echo '----------------------------------------'
        else
-	   echo $dir 'is clean'
+           echo "$dir is clean"
        fi
-       cd ..
-   fi
+    )
+    fi
 done
