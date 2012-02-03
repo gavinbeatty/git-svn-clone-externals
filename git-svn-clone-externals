@@ -3,78 +3,94 @@
 set -e
 set -u
 
-toplevel_directory="$(git rev-parse --show-cdup)"
-[ -n "$toplevel_directory" ] && { echo "please run from the toplevel directory"; exit 1; }
+verbose=1
+dry_run=${dry_run-}
+help=${help-}
 
-call() { echo "$@" ; "$@" ; }
+error() { echo "error: $@" >&2 ; }
+warn() { echo "warn: $@" >&2 ; }
+die() { error "$@" ; exit 1 ; }
+verbose() { test "$1" -gt "$verbose" || { shift ; echo "$@" ; } ; }
+
+call() {
+    echo "$@"
+    if test -z "$dry_run" ; then
+        "$@"
+    fi
+}
 
 do_clone() {
+    local rev="$1"
+    local remote="$2"
+    local co="$3"
 	test -d .git_externals || return 1
-	module="$(echo $remote_url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
-	branch="$(echo $remote_url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
-	if test "$branch" = "$remote_url" ; then
+	local module="$(echo $remote | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
+	local branch="$(echo $remote | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
+	if test "$branch" = "$remote" ; then
 		branch=""
 	fi
  	(
 		cd .git_externals
-		if test -d "$local_directory" ; then
+		if test -d "$co" ; then
 			(
-				cd -- "$local_directory"
+				cd -- "$co"
 				call git svn fetch --all
 			)
 		else
 			tags="tags"
 			brch="branches"
-			branchpath="$(echo $branch|cut -f1 -d/)"
+			branchpath="$(echo $branch | cut -f1 -d/)"
 			echo $tags | grep -- "$branchpath" >/dev/null 2>&1 && tags="$branchpath"
 			echo $brch | grep -- "$branchpath" >/dev/null 2>&1 && brch="$branchpath"
 
-			if test "$module" = "$remote_url" ; then
+			if test "$module" = "$remote" ; then
 				# URL does not contains any trunk, branches or tags part, so we dont need
 				# additional options for git-svn
-				call git svn clone "$revision" "$module" "$local_directory"
+				call git svn clone "$rev" "$module" "$co"
 			else
-				call git svn clone "$revision" "$module" -T trunk -b "$brch" -t "$tags" "$local_directory"
+				call git svn clone "$rev" "$module" -T trunk -b "$brch" -t "$tags" "$co"
 			fi
 
 		fi
 		(
-			branch="$(echo $branch | sed 's,/$,,')"
+			branch="$(echo $branch | sed -e 's,/$,,')"
 			if test -n "$branch" ; then
-				cd -- "$local_directory"
-				call git reset --hard "$branch"
+				cd -- "$co"
+                dry_run=1
+                warn "The following commands might trash your checkout, so I won't run them myself."
+                warn "I will only print the commands, and you should verify them and run them yourself."
+				echo git reset --hard "$branch"
 			fi
 		)
 	)
 }
 
 do_link() {
-	dir="$1"
-	base="$(dirname -- "$dir")"
+	local dir="$1"
+	local base="$(dirname -- "$dir")"
 	(
-		mkdir -p -- "$base"
+		mkdir -p -- "$base" >/dev/null 2>&1 || true
 		cd -- "$base"
-		rel="$(git rev-parse --show-cdup)"
-		ln -sf "${rel}.git_externals/$dir"
+		local rel="$(git rev-parse --show-cdup)"
+		ln -sf -- "${rel}.git_externals/$dir"
 	)
 }
 
 do_excludes() {
-	dir="$1"
+	local dir="$1"
 	git_excludes_path=.git/info/exclude
 	if ! grep -q '^.git_externals$' "$git_excludes_path" ; then
 		echo .git_externals >> "$git_excludes_path"
 	fi
 
-	if ! grep -q '^'"$dir"'$' "$git_excludes_path" ; then
+	if ! grep -q "^$dir\$" "$git_excludes_path" ; then
 		echo "$dir" >> "$git_excludes_path"
 	fi
 }
 
 is_excluded() {
-    local result=0
     if test -f .git_externals_exclude ; then
-        matches="$(grep -v "^#" .git_externals_exclude | grep "^/$1$" | wc -l)"
+        local matches="$(grep -v "^#" .git_externals_exclude | grep "^/$1$" | wc -l)"
         if test "$matches" -gt 0 ; then
             return 1
         fi
@@ -82,48 +98,96 @@ is_excluded() {
     return 0
 }
 
+is_rev() { echo "$1" | grep -Eq '^r?[0-9]+' ; }
+is_url() {
+    case "$1" in
+    *://*) return 0 ;;
+    esac
+    return 1
+}
+categorise() {
+    if is_rev "$1" ; then echo "rev"
+    elif is_url "$1" ; then echo "url"
+    else echo "dir" ; fi
+}
 
-git svn show-externals|grep -vE '#|^$' \
-	| sed -e 's/\(-r\)[ ]*\([0-9]\{1,\}\)/\1\2/' \
-	| while read -a words ; do
-
-    [ -z "${words[*]}" ] && continue
-
-    local_directory="$(echo ${words[0]}|sed 's,^/,,')"
-    revision=""
-    remote_url="${words[1]}"
-
-    check_excluded=0
-    is_excluded "$local_directory" || check_excluded=1
-
-    if test $check_excluded -eq 0 ; then
-        if test -n "${words[2]}" ; then
-            revision="${words[1]}"
-            remote_url="${words[2]}"
-        fi
-
-        if test -n "$USE_SSH" ; then
-            echo "Rewriting url to use SVN+SSH."
-            shopt -s extglob
-            remote_url="${remote_url/+(http|https)/svn+ssh}"
-        fi
-
-	# not test -n "$remote_url" || continue?
-	# do we really want 
-        test -z "${remote_url}" && continue
-
-	# why export??
-        export local_directory revision remote_url
-
-        echo "$local_directory -> $remote_url"
-
-        dir=`dirname $local_directory`
-        [ -d ".git_externals/$dir" ] || mkdir -p ".git_externals/$dir"
-
-        do_clone "$revision" "$remote_url" "$local_directory" # we have set -e || exit
-        do_link "$local_directory"
-        do_excludes "$local_directory"
+main() {
+    if test -n "$help" ; then
+        usage
+        exit 0
     fi
+    if test $# -gt 1 ; then
+        usage >&2
+        exit 1
+    fi
+    if test $# -eq 1 ; then
+        cd -- "$1"
+        shift
+    fi
+    tld="$(git rev-parse --show-cdup)"
+    test -n "$tld" && cd -- "$tld"
 
-done
+    git svn show-externals \
+      | grep -vE '#|^$' \
+      | sed -e 's/\(-r\)[ ]*\([0-9]\{1,\}\)/\1\2/' \
+      | while read rev_co rev_url url_co d ; do
+        test -n "$rev_co" || continue
 
+        local rev=""
+        local url=""
+        local co=""
+
+        case "$(categorise "$rev_co")" in
+        rev) rev="$rev_co" ;;
+        dir) co="$rev_co" ;;
+        *) die "$rev_co was expected to be a revision or directory"
+        esac
+
+        case "$(categorise "$rev_url")" in
+        rev) rev="$rev_url" ;;
+        url) url="$rev_url" ;;
+        *) die "$rev_url was expected to be a revision or remote URL"
+        esac
+
+        case "$(categorise "$url_co")" in
+        url) url="$url_co" ;;
+        dir) co="$url_co" ;;
+        *) die "$url_co was expected to be a remote URL or directory"
+        esac
+
+        if test -n "$extra" ; then
+            warn "Unknown extra data from 'git svn show-externals': $extra"
+        fi
+        unset url_co rev_url rev_co extra
+
+        # XXX these error messages could be improved
+        if test -z "$url" ; then
+            die "URL field is empty"
+        fi
+        if test -z "$co" ; then
+            die "Directory field is empty"
+        fi
+
+        if ! is_excluded "$co" ; then
+            if test -n "${USE_SSH-}" ; then
+                verbose 1 "Rewriting URL to use svn+ssh"
+                remote_url="$(perl -we 'ARGV[1]=~s,^(http|https)://,svn+ssh://,;print "$ARGV[1];' "$url")"
+            fi
+
+            verbose 1 "$co -> $url"
+
+            local baseco="$(dirname -- "$co")
+            if ! test -d ".git_externals/$baseco" ; then
+                verbose 1 "Creating .git_externals"
+                mkdir -p ".git_externals/$baseco"
+            fi
+
+            do_clone "$rev" "$url" "$co" # we have set -e || exit
+            do_link "$co"
+            do_excludes "$co"
+        fi
+    done
+}
+trap 'echo Caught SIGINT >&2 ; exit 1 ;' INT
+trap 'echo Caught SIGTERM >&2 ; exit 1 ;' TERM
+main "$@"
