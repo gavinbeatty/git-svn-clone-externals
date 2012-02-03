@@ -21,71 +21,70 @@ call() {
 
 do_clone() {
     local rev="$1"
-    local remote="$2"
+    local url="$2"
     local co="$3"
-	test -d .git_externals || return 1
-	local module="$(echo $remote | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
-	local branch="$(echo $remote | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
-	if test "$branch" = "$remote" ; then
-		branch=""
-	fi
- 	(
-		cd .git_externals
-		if test -d "$co" ; then
-			(
-				cd -- "$co"
-				call git svn fetch --all
-			)
-		else
-			tags="tags"
-			brch="branches"
-			branchpath="$(echo $branch | cut -f1 -d/)"
-			echo $tags | grep -- "$branchpath" >/dev/null 2>&1 && tags="$branchpath"
-			echo $brch | grep -- "$branchpath" >/dev/null 2>&1 && brch="$branchpath"
+    test -d .git_externals || return 1
+    local module="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
+    local branch="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
+    if test "$branch" = "$url" ; then
+        branch=""
+    fi
+     (
+        if test -d ".git_externals/$co" ; then
+            (
+                cd -- ".git_externals/$co"
+                call git svn fetch --all
+            )
+        else
+            tags="tags"
+            brch="branches"
+            branchpath="$(echo $branch | cut -f1 -d/)"
+            echo $tags | grep -- "$branchpath" >/dev/null 2>&1 && tags="$branchpath"
+            echo $brch | grep -- "$branchpath" >/dev/null 2>&1 && brch="$branchpath"
 
-			if test "$module" = "$remote" ; then
-				# URL does not contains any trunk, branches or tags part, so we dont need
-				# additional options for git-svn
-				call git svn clone "$rev" "$module" "$co"
-			else
-				call git svn clone "$rev" "$module" -T trunk -b "$brch" -t "$tags" "$co"
-			fi
+            if test "$module" = "$url" ; then
+                # URL does not contains any trunk, branches or tags part, so we dont need
+                # additional options for git-svn
+                (cd .git_externals ; call git svn clone "$rev" "$module" "$co")
+            else
+                (cd .git_externals ; call git svn clone "$rev" "$module" -T trunk -b "$brch" -t "$tags" "$co")
+            fi
 
-		fi
-		(
-			branch="$(echo $branch | sed -e 's,/$,,')"
-			if test -n "$branch" ; then
-				cd -- "$co"
+        fi
+        (
+            branch="$(echo $branch | sed -e 's,/$,,')"
+            if test -n "$branch" ; then
+                cd -- ".git_externals/$co"
                 dry_run=1
                 warn "The following commands might trash your checkout, so I won't run them myself."
                 warn "I will only print the commands, and you should verify them and run them yourself."
-				echo git reset --hard "$branch"
-			fi
-		)
-	)
+                echo git reset --hard "$branch"
+            fi
+        )
+    )
 }
 
 do_link() {
-	local dir="$1"
-	local base="$(dirname -- "$dir")"
-	(
-		mkdir -p -- "$base" >/dev/null 2>&1 || true
-		cd -- "$base"
-		local rel="$(git rev-parse --show-cdup)"
-		ln -sf -- "${rel}.git_externals/$dir"
-	)
+    local dir="$1"
+    local base="$(dirname -- "$dir")"
+    (
+        mkdir -p -- "$base" >/dev/null 2>&1 || true
+        cd -- "$base"
+        local rel="$(git rev-parse --show-cdup)"
+        ln -sf -- "${rel}.git_externals/$dir"
+    )
 }
 
 do_excludes() {
-	local dir="$1"
-	git_excludes_path=.git/info/exclude
-	if ! grep -q '^.git_externals$' "$git_excludes_path" ; then
-		echo .git_externals >> "$git_excludes_path"
-	fi
+    local dir="$1"
+    git_excludes_path=.git/info/exclude
+    if ! grep -q '^\.git_externals$' "$git_excludes_path" ; then
+        echo .git_externals >> "$git_excludes_path"
+    fi
 
-	if ! grep -q "^$dir\$" "$git_excludes_path" ; then
-		echo "$dir" >> "$git_excludes_path"
-	fi
+    if ! grep -q "^$dir\$" "$git_excludes_path" ; then
+        echo "$dir" >> "$git_excludes_path"
+    fi
 }
 
 is_excluded() {
