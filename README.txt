@@ -80,3 +80,4 @@ Options
 
 - Alexander Artemenko <svetlyak.40wt@gmail.com>
 
+Adapted by Gavin Beatty <gavinbeatty@gmail.com> 2012
