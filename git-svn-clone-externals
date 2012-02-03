@@ -17,7 +17,6 @@ do_clone() {
     local rev="$1"
     local url="$2"
     local co="$3"
-    test -z "$rev" || rev="-r $rev"
     test -d .git_externals || return 1
     local module="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
     local branch="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
@@ -89,7 +88,7 @@ is_excluded() {
     return 1
 }
 
-is_rev() { echo "$1" | grep -Eq '^r?[0-9]+' ; }
+is_rev() { echo "$1" | grep -q '^-r[0-9][0-9]*$' ; }
 is_url() {
     case "$1" in
     *://*) return 0 ;;
@@ -132,13 +131,19 @@ main() {
         case "$(categorise "$rev_co")" in
         rev) rev="$rev_co" ;;
         dir) co="$rev_co" ;;
-        *) die "$rev_co was expected to be a revision or directory"
+        *)
+            error "$rev_co was expected to be a revision or directory"
+            continue
+            ;;
         esac
 
         case "$(categorise "$rev_url")" in
         rev) rev="$rev_url" ;;
         url) url="$rev_url" ;;
-        *) die "$rev_url was expected to be a revision or remote URL"
+        *)
+            error "$rev_url was expected to be a revision or remote URL"
+            continue
+            ;;
         esac
 
         case "$(categorise "$url_co")" in
@@ -152,7 +157,6 @@ main() {
         fi
 
         local line="$rev_co $rev_url $url_co $extra"
-        # XXX these error messages could be improved
         if test -z "$url" ; then
             die "URL field is empty: $line"
         fi
