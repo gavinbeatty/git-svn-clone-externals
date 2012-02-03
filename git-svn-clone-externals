@@ -176,7 +176,7 @@ main() {
 
             verbose 1 "$co -> $url"
 
-            local baseco="$(dirname -- "$co")
+            local baseco="$(dirname -- "$co")"
             if ! test -d ".git_externals/$baseco" ; then
                 verbose 1 "Creating .git_externals"
                 mkdir -p ".git_externals/$baseco"
