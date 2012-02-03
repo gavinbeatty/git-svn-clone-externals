@@ -171,7 +171,7 @@ main() {
         if ! is_excluded "$co" ; then
             if test -n "${USE_SSH-}" ; then
                 verbose 1 "Rewriting URL to use svn+ssh"
-                remote_url="$(perl -we 'ARGV[1]=~s,^(http|https)://,svn+ssh://,;print "$ARGV[1];' "$url")"
+                remote_url="$(perl -we 'ARGV[1]=~s,^(http|https)://,svn+ssh://,;print "$ARGV[1]\n";' "$url")"
             fi
 
             verbose 1 "$co -> $url"
