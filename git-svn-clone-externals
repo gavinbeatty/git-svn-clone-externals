@@ -1,6 +1,6 @@
 #!/bin/sh
 # vi: set ft=sh expandtab shiftwidth=4 tabstop=4:
-set -e
+set -e # the code relies on this, so remove with care
 set -u
 
 verbose=1
@@ -171,7 +171,7 @@ main() {
         if ! is_excluded "$co" ; then
             if test -n "${USE_SSH-}" ; then
                 verbose 1 "Rewriting URL to use svn+ssh"
-                remote_url="$(perl -we 'ARGV[1]=~s,^(http|https)://,svn+ssh://,;print "$ARGV[1]\n";' "$url")"
+                url="$(perl -we 'ARGV[1]=~s,^(http|https)://,svn+ssh://,;print "$ARGV[1]\n";' "$url")"
             fi
 
             verbose 1 "$co -> $url"
@@ -182,7 +182,7 @@ main() {
                 mkdir -p ".git_externals/$baseco"
             fi
 
-            do_clone "$rev" "$url" "$co" # we have set -e || exit
+            do_clone "$rev" "$url" "$co" || exit
             do_link "$co"
             do_excludes "$co"
         fi
