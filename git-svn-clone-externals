@@ -1,23 +1,34 @@
 #!/bin/sh
-# vi: set ft=sh expandtab shiftwidth=4 tabstop=4:
+# vi: set ft=sh et sw=4 ts=4:
 set -e # the code relies on this, so remove with care
 set -u
+trap 'echo Caught SIGINT >&2 ; exit 1 ;' INT
+trap 'echo Caught SIGTERM >&2 ; exit 1 ;' TERM
 
-verbose=1
-help=${help-}
+verbose=${verbose:-1}
+help=${help:-}
+force=${force:-}
 
 error() { echo "error: $@" >&2 ; }
 warn() { echo "warn: $@" >&2 ; }
 die() { error "$@" ; exit 1 ; }
 verbose() { test "$1" -gt "$verbose" || { shift ; echo "$@" ; } ; }
+# Try to use -- to escape _only the first_ arg, but only if necessary.
+# Only useful for user-provided args.
+x_() {
+    local x="$1" ; shift
+    if test "${1#-}" != "$1" ; then "$x" -- "$@" ; else "$x" "$@" ; fi
+}
+prog="$(x_ basename "$0")"
+usage() { echo "usage: $prog [<git-svn-repo>]" ; }
 
-call() { echo "(cd -- $(pwd) ; $@)" ; "$@" ; }
+call() { echo "(cd $(pwd) ; $@)" ; "$@" ; }
 
 do_clone() {
+    test -d .git_externals || return 1
     local rev="$1"
     local url="$2"
     local co="$3"
-    test -d .git_externals || return 1
     local module="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\1,')"
     local branch="$(echo $url | sed -e 's,\(.*\)\(/trunk\|/branch.*\|/tag.*\),\2,' -e 's,^/,,')"
     if test "$branch" = "$url" ; then
@@ -26,7 +37,7 @@ do_clone() {
      (
         if test -d ".git_externals/$co" ; then
             (
-                cd -- ".git_externals/$co"
+                cd ".git_externals/$co"
                 call git svn fetch --all
             )
         else
@@ -48,9 +59,13 @@ do_clone() {
         (
             branch="$(echo $branch | sed -e 's,/$,,')"
             if test -n "$branch" ; then
-                cd -- ".git_externals/$co"
-                warn "The following command might trash your checkout if there are bugs, so I won't run them for you."
-                echo "(cd -- $(pwd) ; git reset --hard "$branch")"
+                cd ".git_externals/$co"
+                if test -z "$force" ; then
+                    warn "The following command might trash your checkout if there are bugs, so I won't run them for you."
+                    echo "(cd $(pwd) ; git reset --hard "$branch")"
+                else
+                    call git reset --hard "$branch"
+                fi
             fi
         )
     )
@@ -58,12 +73,11 @@ do_clone() {
 
 do_link() {
     local dir="$1"
-    local base="$(dirname -- "$dir")"
+    local base="$(x_ dirname "$dir")"
     (
         mkdir -p -- "$base" >/dev/null 2>&1 || true
-        cd -- "$base"
-        local rel="$(git rev-parse --show-cdup)"
-        ln -sf -- "${rel}.git_externals/$dir"
+        x_ cd "$base"
+        ln -sf "$(git rev-parse --show-cdup).git_externals/$dir"
     )
 }
 
@@ -103,30 +117,40 @@ categorise() {
 }
 
 main() {
+    while test $# -gt 0 ; do
+        case "$1" in
+        -h|--help|-\?) usage ; exit ;;
+        --) shift ; break ;;
+        *) break ;;
+        esac
+        shift
+    done
     if test -n "$help" ; then
         usage
-        exit 0
+        exit
     fi
     if test $# -gt 1 ; then
         usage >&2
         exit 1
     fi
     if test $# -eq 1 ; then
-        cd -- "$1"
+        x_ cd "$1"
         shift
     fi
-    tld="$(git rev-parse --show-cdup)"
-    test -n "$tld" && cd -- "$tld"
-
-    git svn show-externals \
+    local tld="$(git rev-parse --show-cdup)"
+    test -n "$tld" && cd "$tld"
+    mkdir .git_externals 2>/dev/null || true
+    local exts
+    exts="$(git svn show-externals)" || die "$(pwd) doesn't appear to be a git-svn repository."
+    echo "$exts" \
       | grep -vE '#|^$' \
       | sed -e 's/\(-r\)[ ]*\([0-9]\{1,\}\)/\1\2/' \
       | while read rev_co rev_url url_co extra ; do
         test -n "$rev_co" || continue
 
-        local rev=""
-        local url=""
-        local co=""
+        local rev=
+        local url=
+        local co=
 
         case "$(categorise "$rev_co")" in
         rev) rev="$rev_co" ;;
@@ -169,17 +193,16 @@ main() {
         fi
 
         if ! is_excluded "$co" ; then
-            if test -n "${USE_SSH-}" ; then
+            if test -n "${USE_SSH:-}" ; then
                 verbose 1 "Rewriting URL to use svn+ssh"
                 url="$(perl -we 'ARGV[1]=~s,^(http|https)://,svn+ssh://,;print "$ARGV[1]\n";' "$url")"
             fi
 
             verbose 1 "$co -> $url"
-
-            local baseco="$(dirname -- "$co")"
+            local baseco="$(x_ dirname "$co")"
             if ! test -d ".git_externals/$baseco" ; then
                 verbose 1 "Creating .git_externals"
-                mkdir -p ".git_externals/$baseco"
+                mkdir ".git_externals/$baseco"
             fi
 
             do_clone "$rev" "$url" "$co" || exit
@@ -188,6 +211,4 @@ main() {
         fi
     done
 }
-trap 'echo Caught SIGINT >&2 ; exit 1 ;' INT
-trap 'echo Caught SIGTERM >&2 ; exit 1 ;' TERM
 main "$@"
